@@ -57,8 +57,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # File source options
     p.add_argument("--file", default="../src/simulation_data.csv",
                    help="Path to CSV file")
-    p.add_argument("--no-loop", action="store_true",
-                   help="Do not loop CSV playback")
+    p.add_argument("--loop", action="store_true",
+                   help="Loop CSV playback")
     p.add_argument("--speed", type=float, default=1.0,
                    help="CSV playback speed multiplier (default: 1.0)")
 
@@ -83,6 +83,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Disable in-memory recording")
     p.add_argument("--buffer-size", type=int, default=100_000,
                    help="Max frames to keep in memory (default: 100.000)")
+    p.add_argument("--autosave-every", type=int, default=0, metavar="N",
+                   help="Autosave buffer to CSV every N frames (0: disabled)")
 
     return p
 
@@ -91,7 +93,7 @@ def create_source(args):
     if args.source == "file":
         return FileSource(
             path=args.file,
-            loop=not args.no_loop,
+            loop=args.loop,
             speed=args.speed,
         )
     if args.source == "serial":
@@ -114,6 +116,7 @@ async def run(args) -> None:
     recorder = Recorder(
         maxlen=args.buffer_size,
         enabled=not args.no_record,
+        autosave_every=args.autosave_every,
     )
     server = WSServer(
         host=args.ws_host,

@@ -85,9 +85,7 @@ aurora-ground-station/
 - **Node.js** v16+
 - **Python** 3.10+
 
-*   **Node.js** (v16 or higher)
-*   **npm** (usually comes with Node.js)
-*   **Python 3.8+**
+---
 
 ## Installation
 
@@ -183,7 +181,7 @@ usage: main.py [-h] [--source {file,serial}]
 
   File source:
     --file              Path to CSV  (default: ../src/simulation_data.csv)
-    --no-loop           Stop after one pass instead of looping
+    --loop              Loop recording playback
     --speed             Playback speed multiplier  (default: 1.0)
 
   Serial source:
@@ -198,6 +196,7 @@ usage: main.py [-h] [--source {file,serial}]
   Recording:
     --no-record         Disable in-memory recording
     --buffer-size       Max frames to keep in memory  (default: 100000)
+    --autosave-every    Number of frames to be kept in memory before autosave (0: disabled, default: 0)
 ```
 
 ### 3. Connect the dashboard

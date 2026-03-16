@@ -111,6 +111,22 @@ class TestRecorder(unittest.TestCase):
         r.record(TelemetryFrame())
         self.assertEqual(r.count, 0)
 
+    def test_autosave(self):
+        import tempfile, os, csv
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as f:
+            path = f.name
+        try:
+            r = Recorder(autosave_every=3)
+            r.record(TelemetryFrame())  # first record sets _autosave_path
+            r._autosave_path = path     # redirect to temp file
+            for _ in range(5):
+                r.record(TelemetryFrame())
+            with open(path) as f:
+                rows = list(csv.DictReader(f))
+            self.assertEqual(len(rows), 6)
+        finally:
+            os.unlink(path)
+
     def test_stop_start(self):
         r = Recorder()
         r.record(TelemetryFrame())
