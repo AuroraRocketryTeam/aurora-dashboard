@@ -4,6 +4,16 @@
     export let commandHistory = [];
     export let sendCommand; // Function (str) => void
 
+    const UPLINK_COMMANDS = [
+        { name: "PING", id: "PING", color: "#2a9d8f", description: "Check link" },
+        { name: "ABORT", id: "ABORT", color: "#e63946", description: "Emergency abort" },
+        { name: "EMERG CHUTE OPEN", id: "EMERG_CHUTE_OPEN", color: "#f4a261", description: "Force drogue deployment" },
+    ];
+
+    function sendUplinkCommand(id) {
+        sendCommand(JSON.stringify({ command: "transmit", command_id: id }));
+    }
+
     let commandInput = "";
     let commandTemplates = [];
     let newTemplateName = "";
@@ -89,6 +99,18 @@
             </div>
         </div>
 
+        <div class="card">
+            <h3>UPLINK COMMANDS</h3>
+            <div class="uplink-list">
+                {#each UPLINK_COMMANDS as cmd}
+                    <button class="btn-uplink" style="--accent: {cmd.color}" on:click={() => sendUplinkCommand(cmd.id)}>
+                        <span class="uplink-name">{cmd.name}</span>
+                        <span class="uplink-desc">{cmd.description}</span>
+                    </button>
+                {/each}
+            </div>
+        </div>
+
         <div class="card log-card">
             <h3>TRANSMISSION LOG</h3>
             <div class="cmd-log">
@@ -96,9 +118,9 @@
                     <div class="log-empty">No commands sent yet.</div>
                 {/if}
                 {#each commandHistory as entry}
-                    <div class="log-entry">
+                    <div class="log-entry log-{entry.type ?? 'sent'}">
                         <span class="log-time">[{entry.time}]</span>
-                        <span class="log-msg"> >> {entry.msg}</span>
+                        <span class="log-msg"> {entry.msg}</span>
                     </div>
                 {/each}
             </div>
@@ -189,15 +211,19 @@
   .cmd-log { 
       flex-grow: 1; 
       background: #000; 
-      padding: 10px; 
-      border-radius: 4px; 
-      font-family: monospace; 
+      padding: 10px;
+      border-radius: 4px;
+      font-family: monospace;
       overflow-y: auto; 
-      color: #0f0; 
-      border: 1px solid #333; 
+      color: #0f0;
+      border: 1px solid #333;
   }
-  .log-entry { margin-bottom: 4px; font-size: 0.9rem; }
+  .log-entry { margin-bottom: 4px; font-size: 0.9rem; text-align: left; }
   .log-time { color: #555; margin-right: 10px; }
+  .log-sent   .log-msg { color: #0f0; }
+  .log-ack    .log-msg { color: #4cc9f0; }
+  .log-error  .log-msg { color: #e63946; }
+  .log-serial .log-msg { color: #888; font-size: 0.8rem; }
   .log-empty { color: #444; font-style: italic; padding: 10px; text-align: center; }
 
   /* Template Card - Fills Full Height */
@@ -256,6 +282,12 @@
   
   /* Delete Icon Hover */
   .btn-del-icon:hover { background: #e63946; color: white; }
+
+  .uplink-list { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn-uplink { display: flex; flex-direction: column; align-items: flex-start; padding: 10px 16px; border: 1px solid var(--accent); background: transparent; color: var(--accent); border-radius: 4px; cursor: pointer; transition: all 0.2s; min-width: 100px; }
+  .btn-uplink:hover { background: var(--accent); color: #fff; }
+  .uplink-name { font-weight: bold; font-size: 0.9rem; font-family: monospace; }
+  .uplink-desc { font-size: 0.7rem; opacity: 0.7; margin-top: 2px; }
 
   .new-template { border-top: 1px solid #333; padding-top: 15px; display: flex; flex-direction: column; gap: 8px; }
   .new-template h4 { margin: 0; color: #666; font-size: 0.75rem; }

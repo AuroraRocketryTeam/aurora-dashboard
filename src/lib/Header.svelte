@@ -3,6 +3,22 @@
     export let connectionType;
     export let isConnected;
     export let toggleConnection;
+    export let rssi = null;
+
+    // Returns 0-4 bars based on dBm value
+    function rssiBars(dbm) {
+        if (dbm === null) return 0;
+        if (dbm >= -30)  return 4;
+        if (dbm >= -50)  return 3;
+        if (dbm >= -70) return 2;
+        return 1;
+    }
+
+    const _BAR_COLORS = ['#444', '#e63946', '#e9c46a', '#2a9d8f', '#2a9d8f'];
+
+    $: bars = rssiBars(rssi);
+    $: color = _BAR_COLORS[bars];
+    $: rssiLabel = rssi !== null ? `${rssi} dBm` : '---';
 </script>
 
 <header>
@@ -16,6 +32,20 @@
             COMMAND CENTER
         </button>
     </nav>
+
+    <div class="rssi-indicator" title="LoRa RSSI">
+        <svg width="22" height="16" viewBox="0 0 22 16">
+            {#each [4, 7, 10, 13] as x, i}
+                <rect
+                    x={x} y={16 - (i + 1) * 4}
+                    width="3" height={(i + 1) * 4}
+                    fill={i < bars ? color : '#333'}
+                    rx="1"
+                />
+            {/each}
+        </svg>
+        <span style="color: {color}">{rssiLabel}</span>
+    </div>
 
     <div class="connection-ui">
         <select bind:value={connectionType} disabled={isConnected}>
@@ -52,6 +82,9 @@
   
   .status-indicator { width: 10px; height: 10px; border-radius: 50%; background: #444; transition: background 0.3s; }
   .status-indicator.connected { background: #2a9d8f; box-shadow: 0 0 8px #2a9d8f; }
+
+  .rssi-indicator { display: flex; align-items: center; gap: 6px; }
+  .rssi-indicator span { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; min-width: 52px; }
 
   /* --- Navigation Tabs--- */
   .nav-tabs { display: flex; gap: 10px; flex-grow: 1; justify-content: center; }

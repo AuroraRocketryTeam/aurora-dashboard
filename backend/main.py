@@ -35,7 +35,7 @@ from sources.file_source import FileSource
 from sources.serial_source import SerialFormat, SerialSource
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -122,7 +122,12 @@ async def run(args) -> None:
         host=args.ws_host,
         port=args.ws_port,
         recorder=recorder,
+        on_uplink_command=source.send_command,
     )
+
+    async def _forward_serial_log(text: str) -> None:
+        await server.broadcast({"type": "serial_log", "text": text})
+    source.set_log_callback(_forward_serial_log)
 
     log.info("Source   : %s", args.source)
     log.info("Recording: %s  (buffer=%d frames)",

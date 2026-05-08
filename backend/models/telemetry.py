@@ -70,6 +70,7 @@ class OtherData:
     longitude: float = 0.0
     rssi: float = 0.0
     snr: float = 0.0
+    last_ack_command_id: int = 0
 
 
 @dataclass

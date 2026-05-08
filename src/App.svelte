@@ -57,7 +57,16 @@
   ];
 
   // Command Center State
-  let commandHistory = []; 
+  let commandHistory = [];
+  let _lastAckCommandId = 0;
+  let rssi = null;
+
+  const _COMMAND_NAMES = { 0: null, 1: "PING", 2: "ABORT", 3: "EMERG_CHUTE_OPEN" };
+
+  function addCommandEntry(msg, type = "sent") {
+      let time = new Date().toLocaleTimeString();
+      commandHistory = [{ time, msg, type }, ...commandHistory];
+  }
 
   onDestroy(() => {
     disconnect();
@@ -117,7 +126,14 @@
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        handleTelemetry(data);
+        if (data.type === "serial_log") {
+            addCommandEntry(data.text, "serial");
+        } else if ("ok" in data || "error" in data) {
+            if (data.ok) addCommandEntry(`${data.command_id} sent`, "sent");
+            else         addCommandEntry(`${data.error}`, "error");
+        } else {
+            handleTelemetry(data);
+        }
       } catch (e) { }
     };
   }
@@ -268,7 +284,17 @@
 
       if (data.other) {
           if (data.other.stage) currentStage = data.other.stage;
+
+          const ackId = data.other.last_ack_command_id ?? 0;
+          if (ackId !== 0 && ackId !== _lastAckCommandId) {
+              _lastAckCommandId = ackId;
+              let name = _COMMAND_NAMES[ackId] ?? `0x${ackId.toString(16).padStart(2,"0")}`;
+              addCommandEntry(`ACK received: ${name}`, "ack");
+          } else if (ackId === 0) {
+              _lastAckCommandId = 0;
+          }
           
+          if (data.other.rssi != null) rssi = data.other.rssi;
           velocity_z = sanitize(data.other.velocity_z, velocity_z);
           position_z = sanitize(data.other.altitude, position_z);
           
@@ -339,17 +365,18 @@
       }
 
       if (sent) {
-        commandHistory = [{ time, msg: str }, ...commandHistory].slice(0, 50); 
+        addCommandEntry(str, "sent");
       }
   }
 </script>
 
 <main>
-  <Header 
-    bind:activePage 
-    bind:connectionType 
-    {isConnected} 
-    {toggleConnection} 
+  <Header
+    bind:activePage
+    bind:connectionType
+    {isConnected}
+    {toggleConnection}
+    {rssi}
   />
 
   <div class="container-fluid">
@@ -380,7 +407,8 @@
 </main>
 
 <style>
-  :global(body) { background: #0f0f13; color: #eee; margin: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; overflow-x: hidden; }
-  
-  .container-fluid { width: 98%; margin: 0 auto; height: calc(100vh - 60px); }
+  :global(body) { background: #0f0f13; color: #eee; margin: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; overflow: hidden; }
+
+  main { display: flex; flex-direction: column; height: 100vh; }
+  .container-fluid { width: 98%; margin: 0 auto; flex: 1; min-height: 0; overflow: hidden; }
 </style>

@@ -19,3 +19,9 @@ class DataSource(ABC):
 
     async def close(self) -> None:
         """ Optional cleanup when the source is no longer needed. """
+
+    async def send_command(self, command_id: int) -> None:
+        """ Send an uplink command. Does nothing if not supported """
+
+    def set_log_callback(self, cb) -> None:
+        """ Register a callback for forwarding raw serial log lines. """

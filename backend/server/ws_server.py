@@ -30,16 +30,19 @@ import websockets
 from websockets.server import WebSocketServerProtocol
 
 from pipeline.recorder import Recorder
+from typing import Callable, Any
 
 log = logging.getLogger(__name__)
 
 
 class WSServer:
     def __init__(self, host: str = "localhost", port: int = 8081,
-                 recorder: Optional[Recorder] = None):
+                 recorder: Optional[Recorder] = None,
+                 on_uplink_command: Optional[Callable[[int], Any]] = None):
         self.host = host
         self.port = port
         self.recorder = recorder or Recorder(enabled=False)
+        self._on_uplink_command = on_uplink_command
         # multiple clients :)
         # so that we can broadcast our dashboard.
         # TODO: is a separate relay necessary for broadcasting?
@@ -115,6 +118,19 @@ class WSServer:
         elif cmd == "start_recording":
             self.recorder.start()
             await ws.send(json.dumps({"ok": True, "recording": True}))
+
+        elif cmd == "transmit":
+            _COMMAND_IDS = {"PING": 0x01, "ABORT": 0x02, "EMERG_CHUTE_OPEN": 0x03}
+            command_name = str(msg.get("command_id", "")).upper()
+            command_id = _COMMAND_IDS.get(command_name)
+            if command_id is None:
+                await ws.send(json.dumps({"error": f"unknown command: {command_name!r}",
+                                          "available": list(_COMMAND_IDS.keys())}))
+            elif self._on_uplink_command is None:
+                await ws.send(json.dumps({"error": "uplink not available (no serial source)"}))
+            else:
+                await self._on_uplink_command(command_id)
+                await ws.send(json.dumps({"ok": True, "command_id": command_name}))
 
         else:
             await ws.send(json.dumps({"error": f"unknown command: {cmd!r}"}))

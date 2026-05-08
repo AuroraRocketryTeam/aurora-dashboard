@@ -11,10 +11,8 @@ Supported wire formats:
   LORA_TEXT   – Human-readable output printed by the LoRa receiver sketch
                 (telemetry_lora_receiver.ino).  Parsed with a small state machine.
 
-  LORA_BINARY – Framed binary TelemetryPacket (requires receiver firmware to be
-                patched to output framed binary – see FRAMING NOTE below).
-                Frame layout:  0xAA 0x55 | 1-byte length | payload | CRC16-LE
-                The payload is the raw TelemetryPacket struct (~57 bytes).
+  LORA_BINARY – Framed binary TelemetryPacket output by the LoRa receiver sketch.
+                Frame layout:  0xAA 0x55 | 1-byte length | payload
 
   AUTO        – Try to detect the format from the first bytes received.
 
@@ -36,13 +34,14 @@ and call it from processTelemetryPacket() in telemetry_lora_receiver.ino:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import struct
 import time
 from enum import Enum, auto
-from typing import AsyncIterator, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 
 import serial_asyncio  # type: ignore
 
@@ -53,6 +52,12 @@ from sources.generic_source import DataSource
 
 log = logging.getLogger(__name__)
 
+# ── Frame layout from ground station (LORA_BINARY mode) ────────────────────
+# int16_t  rssi_dbm    (2)  — RSSI in dBm as measured by ground station E220
+# [TelemetryPacket follows]
+_RSSI_FMT  = "<h"   # int16 little-endian
+_RSSI_SIZE = struct.calcsize(_RSSI_FMT)   # == 2
+
 # ── Binary TelemetryPacket layout (pragma pack(1), little-endian) ──────────
 # uint32_t timestamp   (4)
 # bool     dataValid   (1)
@@ -60,12 +65,28 @@ log = logging.getLogger(__name__)
 # float    baro1.pressure (4), baro1.temperature (4)
 # float    baro2.pressure (4), baro2.temperature (4)
 # float    gps.latitude (4), gps.longitude (4), gps.altitude (4)
-# Total = 4+1+6*4+2*2+3*4 = 57 bytes
-_TELEM_FMT = "<I?fffffffffffff"   # 1×u32 + 1×bool + 13×f32 = 57 bytes
+# uint8_t  flight_phase (1), last_ack_command_id (1)
+# Total = 4+1+13*4+2 = 59 bytes
+_TELEM_FMT = "<I?" + "f" * 13 + "BB"    # 1×u32 + 1×bool + 13×f32 + 2×u8 = 59 bytes
 _TELEM_SIZE = struct.calcsize(_TELEM_FMT)
+
+_STAGE_NAMES = [
+    "Inactive",
+    "Calibrating",
+    "Ready For Launch",
+    "Launch",
+    "Accelerated Flight",
+    "Ballistic Flight",
+    "Apogee",
+    "Stabilization",
+    "Deceleration",
+    "Landing",
+    "Recovery",
+]
 
 _FRAME_MAGIC = bytes([0xAA, 0x55])
 _FRAME_HEADER_SIZE = 3   # 2 magic + 1 byte length
+_BINARY_MAX_READ_SIZE = 256  # bytes per read() call in binary readers
 
 
 class SerialFormat(Enum):
@@ -377,23 +398,7 @@ class _LoRaTextParser:
                               accelerometer=acc, other=other)
 
 
-# *** Binary parser ***
-# NOTE: doesn't currently work but might be useful in the future.
-# Sending data as human-readable looks like HTTP 1.1 --> HTTP2, beware.
-
-def _crc16(data: bytes) -> int:
-    crc = 0xFFFF
-    for b in data:
-        crc ^= b
-        for _ in range(8):
-            if crc & 0x0001:
-                crc = (crc >> 1) ^ 0xA001
-            else:
-                crc >>= 1
-    return crc
-
-
-def _parse_binary_packet(payload: bytes) -> Optional[TelemetryFrame]:
+def _parse_binary_packet(payload: bytes, rssi: float = 0.0) -> Optional[TelemetryFrame]:
     if len(payload) < _TELEM_SIZE:
         return None
     try:
@@ -404,16 +409,20 @@ def _parse_binary_packet(payload: bytes) -> Optional[TelemetryFrame]:
     (ts_ms, data_valid,
      ax, ay, az, gx, gy, gz,
      b1p, b1t, b2p, b2t,
-     lat, lon, gps_alt) = fields
+     lat, lon, gps_alt,
+     flight_phase, last_ack_cmd_id) = fields
 
     if not data_valid:
         return None
 
     ts = ts_ms / 1000.0
     import math
-    baro1_altitude = 44330.0 * (1.0 - math.pow(b1p / 1013.25, 0.1903))
-    baro2_altitude = 44330.0 * (1.0 - math.pow(b2p / 1013.25, 0.1903))
-    avg_alt = (baro1_altitude + baro2_altitude) / 2.0
+    valid_pressures = [p for p in (b1p, b2p) if p > 0]
+    if valid_pressures:
+        avg_alt = sum(44330.0 * (1.0 - math.pow(p / 101325.0, 0.1903)) for p in valid_pressures) / len(valid_pressures)
+    else:
+        avg_alt = 0.0
+    stage = _STAGE_NAMES[flight_phase] if flight_phase < len(_STAGE_NAMES) else "Unknown"
 
     imu = IMUData(
         acceleration_x=ax, acceleration_y=ay, acceleration_z=az,
@@ -427,9 +436,14 @@ def _parse_binary_packet(payload: bytes) -> Optional[TelemetryFrame]:
         altitude=avg_alt,
         latitude=lat,
         longitude=lon,
+        stage=stage,
+        last_ack_command_id=last_ack_cmd_id,
+        rssi=rssi,
     )
     return TelemetryFrame(imu=imu, barometer1=b1, barometer2=b2,
                           accelerometer=acc, other=other)
+
+
 
 
 class SerialSource(DataSource):
@@ -443,12 +457,14 @@ class SerialSource(DataSource):
     """
 
     def __init__(self, port: str, baud: int = 115200,
-                 fmt: SerialFormat = SerialFormat.AUTO):
+                 fmt: SerialFormat = SerialFormat.AUTO,
+                 on_serial_log: Optional[Callable[[str], Any]] = None):
         self.port = port
         self.baud = baud
         self.fmt = fmt
         self._reader = None
         self._writer = None
+        self._on_serial_log = on_serial_log
 
     async def stream(self) -> AsyncIterator[TelemetryFrame]:
         log.info("SerialSource: opening %s @ %d baud (format=%s)",
@@ -462,13 +478,18 @@ class SerialSource(DataSource):
             return
 
         detected_fmt = self.fmt
+
+        # Binary formats bypass the line split reader entirely
+        if detected_fmt == SerialFormat.LORA_BINARY:
+            async for frame in self._stream_binary(detected_fmt):
+                yield frame
+            return
+
         text_parser = _LoRaTextParser()
-        binary_buf = bytearray()
 
         async for line_bytes in self._reader:
             line = line_bytes.decode("utf-8", errors="replace")
 
-            # auto dectector
             if detected_fmt == SerialFormat.AUTO:
                 stripped = line.strip()
                 if stripped.startswith("{") or stripped.startswith("["):
@@ -479,9 +500,10 @@ class SerialSource(DataSource):
                     log.info("SerialSource: detected LORA_TEXT format")
                 elif stripped and stripped[0:1] in ("\xaa", "\xAA"):
                     detected_fmt = SerialFormat.LORA_BINARY
-                    log.info("SerialSource: detected LORA_BINARY format")
+                    log.info("SerialSource: detected LORA_BINARY format, switching to binary reader")
+                    break
                 else:
-                    log.warning("SerialSource: detected unknown format: %s", line)
+                    log.warning("SerialSource: unrecognised line: %s", line)
                     continue
 
             if detected_fmt == SerialFormat.JSON_LINE:
@@ -494,36 +516,87 @@ class SerialSource(DataSource):
                 if frame:
                     yield frame
 
-            elif detected_fmt == SerialFormat.LORA_BINARY:
-                # resize buffer to line
-                binary_buf.extend(line_bytes)
-                while True:
-                    idx = binary_buf.find(_FRAME_MAGIC)
-                    if idx == -1:
-                        binary_buf.clear()
-                        break
-                    if idx > 0:
-                        del binary_buf[:idx]
-                    # need magic(2) + length(1) + at least 1 byte + crc(2)
-                    if len(binary_buf) < _FRAME_HEADER_SIZE + 1 + 2:
-                        log.warning("SerialSource: unexpected frame header: %s", line)
-                        break
-                    length = binary_buf[2]
-                    total = _FRAME_HEADER_SIZE + length + 2
-                    if len(binary_buf) < total:
-                        break
-                    payload = bytes(binary_buf[_FRAME_HEADER_SIZE: _FRAME_HEADER_SIZE + length])
-                    crc_bytes = bytes(binary_buf[_FRAME_HEADER_SIZE + length: total])
-                    expected_crc = struct.unpack("<H", crc_bytes)[0]
-                    if _crc16(payload) != expected_crc:
-                        log.warning("SerialSource: CRC mismatch, dropping frame")
-                        del binary_buf[:3]
-                        continue
-                    frame = _parse_binary_packet(payload)
-                    if frame:
-                        yield frame
-                    del binary_buf[:total]
+        # AUTO detected a binary format mid-stream: hand off to byte reader
+        if detected_fmt == SerialFormat.LORA_BINARY:
+            async for frame in self._stream_binary(detected_fmt):
+                yield frame
+
+    async def _stream_binary(self, fmt: SerialFormat) -> AsyncIterator[TelemetryFrame]:
+        if fmt == SerialFormat.LORA_BINARY:
+            async for frame in self._stream_lora_binary():
+                yield frame
+
+    async def _stream_lora_binary(self) -> AsyncIterator[TelemetryFrame]:
+        """Byte reader for LoRa binary framed packets (0xAA 0x55 | len | payload)."""
+        buf = bytearray()
+        while True:
+            chunk = await self._reader.read(_BINARY_MAX_READ_SIZE)
+            if not chunk:
+                break
+            log.debug("_stream_lora_binary: read %d bytes: %s", len(chunk), chunk.hex())
+            buf.extend(chunk)
+
+            while True:
+                idx = buf.find(_FRAME_MAGIC)
+                if idx == -1:
+                    decoded = buf.decode("utf-8", errors="replace")
+                    log.debug("_stream_lora_binary: no magic in buf (%d bytes), discarding: hex=%s text=%r",
+                              len(buf), buf.hex(), decoded)
+                    if self._on_serial_log:
+                        for line in decoded.splitlines():
+                            line = line.strip()
+                            if line:
+                                asyncio.ensure_future(self._on_serial_log(line))
+                    buf.clear()
+                    break
+                if idx > 0:
+                    skipped = buf[:idx]
+                    log.debug("_stream_lora_binary: skipping %d bytes before magic", idx)
+                    if self._on_serial_log:
+                        decoded = skipped.decode("utf-8", errors="replace")
+                        for line in decoded.splitlines():
+                            line = line.strip()
+                            if line:
+                                asyncio.ensure_future(self._on_serial_log(line))
+                    del buf[:idx]
+                # need magic(2) + length(1) + at least 1 byte
+                if len(buf) < _FRAME_HEADER_SIZE + 1:
+                    break
+                length = buf[2]
+                total = _FRAME_HEADER_SIZE + length
+                log.debug("_stream_lora_binary: frame found, length=%d, buf=%d bytes available", length, len(buf))
+                if len(buf) < total:
+                    break
+                payload = bytes(buf[_FRAME_HEADER_SIZE: _FRAME_HEADER_SIZE + length])
+                log.debug("_stream_lora_binary: payload (%d bytes): %s", len(payload), payload.hex())
+                rssi_dbm = 0.0
+                telem_payload = payload
+                if len(payload) >= _RSSI_SIZE + _TELEM_SIZE:
+                    rssi_dbm = float(struct.unpack_from(_RSSI_FMT, payload, 0)[0])
+                    telem_payload = payload[_RSSI_SIZE:]
+                frame = _parse_binary_packet(telem_payload, rssi=rssi_dbm)
+                if frame:
+                    yield frame
+                else:
+                    log.warning("_stream_lora_binary: _parse_binary_packet returned None for payload: %s", payload.hex())
+                del buf[:total]
+
+    def set_log_callback(self, cb) -> None:
+        self._on_serial_log = cb
+
+    async def send_command(self, command_id: int) -> None:
+        if not self._writer:
+            log.warning("SerialSource.send_command: serial port not open")
+            return
+        frame = bytes([0xCC, 0xDD, command_id & 0xFF])
+        self._writer.write(frame)
+        await self._writer.drain()
+        log.info("SerialSource: sent command 0x%02X", command_id)
 
     async def close(self) -> None:
         if self._writer:
             self._writer.close()
+            try:
+                await self._writer.wait_closed()
+            except Exception:
+                pass
