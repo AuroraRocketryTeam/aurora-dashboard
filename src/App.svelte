@@ -65,7 +65,7 @@
 
   function addCommandEntry(msg, type = "sent") {
       let time = new Date().toLocaleTimeString();
-      commandHistory = [{ time, msg, type }, ...commandHistory];
+      commandHistory = [{ time, msg, type }, ...commandHistory].slice(0, 100);
   }
 
   onDestroy(() => {
@@ -129,8 +129,8 @@
         if (data.type === "serial_log") {
             addCommandEntry(data.text, "serial");
         } else if ("ok" in data || "error" in data) {
-            if (data.ok) addCommandEntry(`${data.command_id} sent`, "sent");
-            else         addCommandEntry(`${data.error}`, "error");
+            if (data.ok)   addCommandEntry(data.command_id ? `${data.command_id} sent` : "OK", "sent");
+            else           addCommandEntry(`${data.error}`, "error");
         } else {
             handleTelemetry(data);
         }

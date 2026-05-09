@@ -5,7 +5,7 @@
     export let toggleConnection;
     export let rssi = null;
 
-    // Returns 0-4 bars based on dBm value
+    // Returns 1-4 bars based on dBm value (0 if null)
     function rssiBars(dbm) {
         if (dbm === null) return 0;
         if (dbm >= -30)  return 4;

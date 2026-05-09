@@ -243,7 +243,7 @@ The binary mode is more efficient and removes the text-parsing overhead. To enab
 ```cpp
 void sendBinaryFrame(const TelemetryPacket& pkt) {
     const uint8_t MAGIC[2] = {0xAA, 0x55};
-    uint8_t len = sizeof(TelemetryPacket);          // 57 bytes
+    uint8_t len = sizeof(TelemetryPacket);          // 59 bytes
     uint16_t crc = calculateCRC16((const uint8_t*)&pkt, len);
     Serial.write(MAGIC, 2);
     Serial.write(&len, 1);
@@ -252,7 +252,7 @@ void sendBinaryFrame(const TelemetryPacket& pkt) {
 }
 ```
 
-Frame layout: `0xAA 0x55 | length(1B) | TelemetryPacket(57B) | CRC16-LE(2B)` = 62 bytes.
+Frame layout: `0xAA 0x55 | length(1B) | RSSI(2B, int16 LE) | TelemetryPacket(59B)` = 64 bytes total, length field = 61.
 
 ---
 

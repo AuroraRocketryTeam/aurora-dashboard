@@ -498,7 +498,7 @@ class SerialSource(DataSource):
                 elif "TELEMETRY PACKET" in stripped:
                     detected_fmt = SerialFormat.LORA_TEXT
                     log.info("SerialSource: detected LORA_TEXT format")
-                elif stripped and stripped[0:1] in ("\xaa", "\xAA"):
+                elif _FRAME_MAGIC in line_bytes:
                     detected_fmt = SerialFormat.LORA_BINARY
                     log.info("SerialSource: detected LORA_BINARY format, switching to binary reader")
                     break

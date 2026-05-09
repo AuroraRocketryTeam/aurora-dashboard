@@ -8,7 +8,7 @@ from models.telemetry import TelemetryFrame, IMUData, BarometerData, Acceleromet
 from pipeline.recorder import Recorder
 from sources.serial_source import (
     _LoRaTextParser, _parse_json_line, _parse_binary_packet,
-    _crc16, _TELEM_FMT, _TELEM_SIZE, _from_json_sensor_array,
+    _TELEM_FMT, _TELEM_SIZE, _from_json_sensor_array,
 )
 
 
@@ -48,12 +48,13 @@ def make_binary_payload(
     ts_ms=5000, data_valid=True,
     ax=1.0, ay=2.0, az=9.81,
     gx=0.1, gy=0.2, gz=0.3,
-    b1p=1013.25, b1t=22.5,
-    b2p=1012.0, b2t=22.0,
+    b1p=101325.0, b1t=22.5,
+    b2p=101200.0, b2t=22.0,
     lat=45.0, lon=9.0, alt=150.0,
+    flight_phase=0, last_ack=0,
 ):
     return struct.pack(_TELEM_FMT, ts_ms, data_valid, ax, ay, az, gx, gy, gz,
-                       b1p, b1t, b2p, b2t, lat, lon, alt)
+                       b1p, b1t, b2p, b2t, lat, lon, alt, flight_phase, last_ack)
 
 
 class TestTelemetryFrame(unittest.TestCase):
@@ -187,14 +188,14 @@ class TestLoRaTextParser(unittest.TestCase):
 
 class TestBinaryParser(unittest.TestCase):
     def test_struct_size(self):
-        self.assertEqual(_TELEM_SIZE, 57)
+        self.assertEqual(_TELEM_SIZE, 59)
 
     def test_parses_valid_payload(self):
         payload = make_binary_payload()
         frame = _parse_binary_packet(payload)
         self.assertIsNotNone(frame)
         self.assertAlmostEqual(frame.imu.acceleration_z, 9.81, places=4)
-        self.assertAlmostEqual(frame.barometer1.pressure, 1013.25, places=4)
+        self.assertAlmostEqual(frame.barometer1.pressure, 101325.0, places=4)
         self.assertAlmostEqual(frame.other.latitude, 45.0, places=4)
         self.assertAlmostEqual(frame.imu.timestamp, 5.0, places=4)
 
@@ -205,10 +206,6 @@ class TestBinaryParser(unittest.TestCase):
     def test_short_payload_returns_none(self):
         self.assertIsNone(_parse_binary_packet(b"\x00" * 10))
 
-    def test_crc16(self):
-        data = b"\x01\x02\x03\x04"
-        self.assertEqual(_crc16(data), _crc16(data))
-        self.assertNotEqual(_crc16(data), _crc16(b"\x01\x02\x03\x05"))
 
 
 class TestJsonLineParser(unittest.TestCase):

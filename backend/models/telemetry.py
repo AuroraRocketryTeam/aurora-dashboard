@@ -46,7 +46,7 @@ class IMUData:
 
 @dataclass
 class BarometerData:
-    pressure: float = 0.0       # hPa
+    pressure: float = 0.0       # Pa
     temperature: float = 0.0    # °C
     timestamp: float = 0.0
 
