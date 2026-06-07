@@ -61,7 +61,9 @@ class AccelerometerData:
 
 @dataclass
 class OtherData:
-    altitude: float = 0.0       # m
+    altitude: float = 0.0      # m
+    baro_altitude: float = 0.0 # m
+    velocity: float = 0.0      # m/s general velocity
     velocity_x: float = 0.0
     velocity_y: float = 0.0
     velocity_z: float = 0.0
@@ -94,60 +96,40 @@ class TelemetryFrame:
         }
 
     def to_csv_row(self) -> dict:
-        """ Flatten to a dict suitable for csv.DictWriter. """
+        """Flatten to a dict suitable for csv.DictWriter.
+
+        Only fields that are actually transmitted in the binary TelemetryPacket
+        are included.  Fields available only in direct-serial / CSV-replay mode
+        (calibration, orientation, linear_acceleration, gravity, magnetometer,
+        quaternions, LIS3DHTR accelerometer, velocity components, SNR) are
+        omitted to avoid cluttering the output with permanent zeros.
+        """
         imu = self.imu
-        b1 = self.barometer1
-        b2 = self.barometer2
-        acc = self.accelerometer
+        b1  = self.barometer1
+        b2  = self.barometer2
         oth = self.other
         return {
-            "timestamp": imu.timestamp or self.ingested_at,
-            "stage": oth.stage,
-            # IMU / BNO055
-            "calibration_sys": imu.calibration_sys,
-            "calibration_gyro": imu.calibration_gyro,
-            "calibration_accel": imu.calibration_accel,
-            "calibration_mag": imu.calibration_mag,
-            "orientation_x": imu.orientation_x,
-            "orientation_y": imu.orientation_y,
-            "orientation_z": imu.orientation_z,
+            "timestamp":          imu.timestamp or self.ingested_at,
+            "stage":              oth.stage,
+            "acceleration_x":     imu.acceleration_x,
+            "acceleration_y":     imu.acceleration_y,
+            "acceleration_z":     imu.acceleration_z,
             "angular_velocity_x": imu.angular_velocity_x,
             "angular_velocity_y": imu.angular_velocity_y,
             "angular_velocity_z": imu.angular_velocity_z,
-            "linear_acceleration_x": imu.linear_acceleration_x,
-            "linear_acceleration_y": imu.linear_acceleration_y,
-            "linear_acceleration_z": imu.linear_acceleration_z,
-            "acceleration_x": imu.acceleration_x,
-            "acceleration_y": imu.acceleration_y,
-            "acceleration_z": imu.acceleration_z,
-            "gravity_x": imu.gravity_x,
-            "gravity_y": imu.gravity_y,
-            "gravity_z": imu.gravity_z,
-            "magnetometer_x": imu.magnetometer_x,
-            "magnetometer_y": imu.magnetometer_y,
-            "magnetometer_z": imu.magnetometer_z,
-            "quaternion_w": imu.quaternion_w,
-            "quaternion_x": imu.quaternion_x,
-            "quaternion_y": imu.quaternion_y,
-            "quaternion_z": imu.quaternion_z,
-            "temperature": imu.temperature,
-            # Barometers
-            "pressure": b1.pressure,
-            "pressure_baro2": b2.pressure,
-            "temperature_baro2": b2.temperature,
-            # Accelerometer (LIS3DHTR)
-            "accel_x": acc.acceleration_x,
-            "accel_y": acc.acceleration_y,
-            "accel_z": acc.acceleration_z,
-            # Position / velocity
-            "altitude": oth.altitude,
-            "velocity_x": oth.velocity_x,
-            "velocity_y": oth.velocity_y,
-            "velocity_z": oth.velocity_z,
-            # GPS
-            "latitude": oth.latitude,
-            "longitude": oth.longitude,
-            # Radio quality
-            "rssi": oth.rssi,
-            "snr": oth.snr,
+            # Barometers (pressure in Pa, temperature in °C)
+            "pressure_baro1":     b1.pressure,
+            "temperature_baro1":  b1.temperature,
+            "pressure_baro2":     b2.pressure,
+            "temperature_baro2":  b2.temperature,
+            # Altitude
+            "baro_altitude":      oth.baro_altitude,   # relative (m)
+            "gps_altitude":       oth.altitude,         # absolute (m)
+            # GPS position
+            "latitude":           oth.latitude,
+            "longitude":          oth.longitude,
+            # Velocity
+            "velocity":           oth.velocity,         # total velocity (m/s)
+            # Radio
+            "rssi":               oth.rssi,
         }

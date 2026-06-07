@@ -59,15 +59,19 @@ _RSSI_FMT  = "<h"   # int16 little-endian
 _RSSI_SIZE = struct.calcsize(_RSSI_FMT)   # == 2
 
 # ── Binary TelemetryPacket layout (pragma pack(1), little-endian) ──────────
-# uint32_t timestamp   (4)
-# bool     dataValid   (1)
-# float    imu.accel_x (4) … accel_y … accel_z … gyro_x … gyro_y … gyro_z
-# float    baro1.pressure (4), baro1.temperature (4)
-# float    baro2.pressure (4), baro2.temperature (4)
-# float    gps.latitude (4), gps.longitude (4), gps.altitude (4)
-# uint8_t  flight_phase (1), last_ack_command_id (1)
-# Total = 4+1+13*4+2 = 59 bytes
-_TELEM_FMT = "<I?" + "f" * 13 + "BB"    # 1×u32 + 1×bool + 13×f32 + 2×u8 = 59 bytes
+# uint32_t timestamp       (4)
+# bool     dataValid        (1)
+# float    imu.accel_x/y/z (12)
+# float    imu.gyro_x/y/z  (12)
+# float    baro1 p, t       (8)
+# float    baro2 p, t       (8)
+# float    baro_altitude    (4)
+# float    gps lat/lon/alt  (12)
+# float    velocity         (4)
+# uint8_t  flight_phase     (1)
+# uint8_t  last_ack_cmd_id  (1)
+# Total = 4+1+24+8+8+4+12+4+2 = 67 bytes
+_TELEM_FMT = "<I?" + "f" * 15 + "BB"    # 1×u32 + 1×bool + 15×f32 + 2×u8 = 67 bytes
 _TELEM_SIZE = struct.calcsize(_TELEM_FMT)
 
 _STAGE_NAMES = [
@@ -409,19 +413,15 @@ def _parse_binary_packet(payload: bytes, rssi: float = 0.0) -> Optional[Telemetr
     (ts_ms, data_valid,
      ax, ay, az, gx, gy, gz,
      b1p, b1t, b2p, b2t,
+     baro_alt,
      lat, lon, gps_alt,
+     velocity,
      flight_phase, last_ack_cmd_id) = fields
 
     if not data_valid:
         return None
 
     ts = ts_ms / 1000.0
-    import math
-    valid_pressures = [p for p in (b1p, b2p) if p > 0]
-    if valid_pressures:
-        avg_alt = sum(44330.0 * (1.0 - math.pow(p / 101325.0, 0.1903)) for p in valid_pressures) / len(valid_pressures)
-    else:
-        avg_alt = 0.0
     stage = _STAGE_NAMES[flight_phase] if flight_phase < len(_STAGE_NAMES) else "Unknown"
 
     imu = IMUData(
@@ -433,7 +433,9 @@ def _parse_binary_packet(payload: bytes, rssi: float = 0.0) -> Optional[Telemetr
     b2 = BarometerData(pressure=b2p, temperature=b2t, timestamp=ts)
     acc = AccelerometerData(acceleration_x=ax, acceleration_y=ay, acceleration_z=az, timestamp=ts)
     other = OtherData(
-        altitude=avg_alt,
+        altitude=gps_alt,
+        baro_altitude=baro_alt,
+        velocity=velocity,
         latitude=lat,
         longitude=lon,
         stage=stage,

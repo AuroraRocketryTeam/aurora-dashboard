@@ -50,11 +50,14 @@ def make_binary_payload(
     gx=0.1, gy=0.2, gz=0.3,
     b1p=101325.0, b1t=22.5,
     b2p=101200.0, b2t=22.0,
-    lat=45.0, lon=9.0, alt=150.0,
+    baro_alt=6.5,
+    lat=45.0, lon=9.0, gps_alt=150.0,
+    velocity=12.3,
     flight_phase=0, last_ack=0,
 ):
     return struct.pack(_TELEM_FMT, ts_ms, data_valid, ax, ay, az, gx, gy, gz,
-                       b1p, b1t, b2p, b2t, lat, lon, alt, flight_phase, last_ack)
+                       b1p, b1t, b2p, b2t, baro_alt, lat, lon, gps_alt,
+                       velocity, flight_phase, last_ack)
 
 
 class TestTelemetryFrame(unittest.TestCase):
@@ -188,7 +191,7 @@ class TestLoRaTextParser(unittest.TestCase):
 
 class TestBinaryParser(unittest.TestCase):
     def test_struct_size(self):
-        self.assertEqual(_TELEM_SIZE, 59)
+        self.assertEqual(_TELEM_SIZE, 67)
 
     def test_parses_valid_payload(self):
         payload = make_binary_payload()
