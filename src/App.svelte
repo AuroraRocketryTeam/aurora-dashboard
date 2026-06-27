@@ -297,20 +297,22 @@
           if (data.other.rssi != null) rssi = data.other.rssi;
           velocity_z = sanitize(data.other.velocity_z, velocity_z);
           position_z = sanitize(data.other.altitude, position_z);
-          
+
           // Attempt to get X and Y for magnitude calculation
           vx = sanitize(data.other.velocity_x, 0);
           vy = sanitize(data.other.velocity_y, 0);
       }
 
       // Update Visualization Histories
-      
+
       const ax = sanitize(accel.acceleration_x, 0);
       const ay = sanitize(accel.acceleration_y, 0);
       const az = sanitize(accel.acceleration_z, 0);
-      
+
       accel_mag = Math.sqrt((ax * ax) + (ay * ay) + (az * az));
-      velocity_mag = Math.sqrt((vx * vx) + (vy * vy) + (velocity_z * velocity_z));
+      // Use vector components if available, otherwise fall back to the scalar velocity from the packet
+      const componentMag = Math.sqrt((vx * vx) + (vy * vy) + (velocity_z * velocity_z));
+      velocity_mag = (vx || vy || velocity_z) ? componentMag : sanitize(data?.other?.velocity, 0);
       const newPressure = sanitize(baro1.pressure, 101325);
 
       // Initialization Logic

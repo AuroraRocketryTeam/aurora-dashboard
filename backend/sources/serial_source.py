@@ -162,9 +162,7 @@ def _from_unified_json(data: dict) -> Optional[TelemetryFrame]:
     )
     other = OtherData(
         altitude=raw_oth.get("altitude", 0.0),
-        velocity_x=raw_oth.get("velocity_x", 0.0),
-        velocity_y=raw_oth.get("velocity_y", 0.0),
-        velocity_z=raw_oth.get("velocity_z", 0.0),
+        velocity=raw_oth.get("velocity", 0.0),
         stage=raw_oth.get("stage", "Inactive"),
         latitude=raw_oth.get("latitude", 0.0),
         longitude=raw_oth.get("longitude", 0.0),
@@ -395,6 +393,7 @@ class _LoRaTextParser:
             altitude=avg_alt,
             latitude=s.get("gps_lat", 0.0),
             longitude=s.get("gps_lon", 0.0),
+            velocity=s.get("velocity", 0.0),
             rssi=s.get("rssi", 0.0),
             snr=s.get("snr", 0.0),
         )
