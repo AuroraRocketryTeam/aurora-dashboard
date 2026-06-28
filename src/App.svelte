@@ -61,6 +61,16 @@
   let _lastAckCommandId = 0;
   let rssi = null;
 
+  // Packet rate counter (sliding 2-second window for fractional pkt/s)
+  let packetRate = 0;
+  let _packetTimestamps = [];
+  const _packetRateTimer = setInterval(() => {
+      const now = performance.now();
+      _packetTimestamps = _packetTimestamps.filter(t => now - t <= 15000);
+      const span = Math.min((now - (_packetTimestamps[0] ?? now)) / 1000, 15);
+      packetRate = span > 0 ? _packetTimestamps.length / span : 0;
+  }, 250);
+
   const _COMMAND_NAMES = { 0: null, 1: "PING", 2: "ABORT", 3: "EMERG_CHUTE_OPEN" };
 
   function addCommandEntry(msg, type = "sent") {
@@ -70,6 +80,7 @@
 
   onDestroy(() => {
     disconnect();
+    clearInterval(_packetRateTimer);
   });
 
   // Connection Management
@@ -273,6 +284,8 @@
   }
 
   function handleTelemetry(data) {
+      _packetTimestamps.push(performance.now());
+
       // Extract Standard Sensors (Merge with existing state to prevent flickering if partial updates come)
       if (data.imu) imu = { ...imu, ...data.imu };
       if (data.barometer1) baro1 = { ...baro1, ...data.barometer1 };
@@ -379,6 +392,7 @@
     {isConnected}
     {toggleConnection}
     {rssi}
+    {packetRate}
   />
 
   <div class="container-fluid">

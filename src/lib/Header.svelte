@@ -4,6 +4,7 @@
     export let isConnected;
     export let toggleConnection;
     export let rssi = null;
+    export let packetRate = 0;
 
     // Returns 1-4 bars based on dBm value (0 if null)
     function rssiBars(dbm) {
@@ -45,6 +46,7 @@
             {/each}
         </svg>
         <span style="color: {color}">{rssiLabel}</span>
+        <span class="pkt-rate" title="Packets per second">{packetRate.toFixed(2)} pkt/s</span>
     </div>
 
     <div class="connection-ui">
@@ -85,6 +87,7 @@
 
   .rssi-indicator { display: flex; align-items: center; gap: 6px; }
   .rssi-indicator span { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; min-width: 52px; }
+  .pkt-rate { color: #888; min-width: 56px; margin-right: 16px; }
 
   /* --- Navigation Tabs--- */
   .nav-tabs { display: flex; gap: 10px; flex-grow: 1; justify-content: center; }
