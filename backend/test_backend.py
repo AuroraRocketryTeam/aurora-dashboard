@@ -8,7 +8,7 @@ from models.telemetry import TelemetryFrame, IMUData, BarometerData, Acceleromet
 from pipeline.recorder import Recorder
 from sources.serial_source import (
     _LoRaTextParser, _parse_json_line, _parse_binary_packet,
-    _TELEM_FMT, _TELEM_SIZE, _from_json_sensor_array,
+    _TELEM_FMT, _TELEM_SIZE, _from_json_sensor_array, _STAGE_NAMES,
 )
 
 
@@ -47,7 +47,10 @@ def make_lora_frame():
 def make_binary_payload(
     ts_ms=5000, data_valid=True,
     ax=1.0, ay=2.0, az=9.81,
-    gx=0.1, gy=0.2, gz=0.3,
+    ox=0.1, oy=0.2, oz=0.3,
+    lax=0.4, lay=0.5, laz=0.6,
+    gx=0.7, gy=0.8, gz=0.9,
+    calib_sys=3, calib_gyro=3, calib_accel=2, calib_mag=1,
     b1p=101325.0, b1t=22.5,
     b2p=101200.0, b2t=22.0,
     baro_alt=6.5,
@@ -55,7 +58,9 @@ def make_binary_payload(
     velocity=12.3,
     flight_phase=0, last_ack=0,
 ):
-    return struct.pack(_TELEM_FMT, ts_ms, data_valid, ax, ay, az, gx, gy, gz,
+    return struct.pack(_TELEM_FMT, ts_ms, data_valid, ax, ay, az, ox, oy, oz,
+                       lax, lay, laz, gx, gy, gz,
+                       calib_sys, calib_gyro, calib_accel, calib_mag,
                        b1p, b1t, b2p, b2t, baro_alt, lat, lon, gps_alt,
                        velocity, flight_phase, last_ack)
 
@@ -191,7 +196,7 @@ class TestLoRaTextParser(unittest.TestCase):
 
 class TestBinaryParser(unittest.TestCase):
     def test_struct_size(self):
-        self.assertEqual(_TELEM_SIZE, 67)
+        self.assertEqual(_TELEM_SIZE, 95)
 
     def test_parses_valid_payload(self):
         payload = make_binary_payload()
@@ -206,8 +211,54 @@ class TestBinaryParser(unittest.TestCase):
         payload = make_binary_payload(data_valid=False)
         self.assertIsNone(_parse_binary_packet(payload))
 
+    def test_imu_block_order(self):
+        # The IMU block is attitude, then linear acceleration, then the rate
+        # gyro, then the calibration: a field inserted in the firmware without
+        # updating _TELEM_FMT shifts everything that follows.
+        frame = _parse_binary_packet(make_binary_payload(
+            ox=10.0, oy=-20.0, oz=30.0, lax=1.5, lay=2.5, laz=3.5,
+            gx=0.11, gy=0.22, gz=0.33, calib_sys=3, calib_gyro=2, calib_accel=1, calib_mag=0))
+        self.assertAlmostEqual(frame.imu.orientation_x, 10.0, places=4)
+        self.assertAlmostEqual(frame.imu.orientation_z, 30.0, places=4)
+        self.assertAlmostEqual(frame.imu.linear_acceleration_x, 1.5, places=4)
+        self.assertAlmostEqual(frame.imu.linear_acceleration_z, 3.5, places=4)
+        self.assertAlmostEqual(frame.imu.angular_velocity_x, 0.11, places=4)
+        self.assertAlmostEqual(frame.imu.angular_velocity_z, 0.33, places=4)
+        self.assertEqual(
+            (frame.imu.calibration_sys, frame.imu.calibration_gyro,
+             frame.imu.calibration_accel, frame.imu.calibration_mag), (3, 2, 1, 0))
+
+    def test_fields_after_the_imu_block(self):
+        # The barometers and the position sit after the calibration bytes.
+        frame = _parse_binary_packet(make_binary_payload())
+        self.assertAlmostEqual(frame.barometer1.pressure, 101325.0, places=4)
+        self.assertAlmostEqual(frame.barometer2.temperature, 22.0, places=4)
+        self.assertAlmostEqual(frame.other.baro_altitude, 6.5, places=4)
+        self.assertAlmostEqual(frame.other.longitude, 9.0, places=4)
+        self.assertAlmostEqual(frame.other.velocity, 12.3, places=4)
+
     def test_short_payload_returns_none(self):
         self.assertIsNone(_parse_binary_packet(b"\x00" * 10))
+
+    def test_stage_names_match_firmware_enum(self):
+        """flight_phase is the raw RocketState ordinal from the firmware
+        (atlas-esp-idf/components/control/src/FlightState.hpp). If a state is
+        inserted there, every following name here silently shifts."""
+        self.assertEqual(_STAGE_NAMES, [
+            "Inactive", "Calibrating", "Ground Services", "Ready For Launch",
+            "Launch", "Accelerated Flight", "Ballistic Flight", "Apogee",
+            "Stabilization", "Deceleration", "Landing", "Recovered",
+        ])
+
+    def test_flight_phase_decodes_to_stage(self):
+        for phase, expected in enumerate(_STAGE_NAMES):
+            frame = _parse_binary_packet(make_binary_payload(flight_phase=phase))
+            self.assertIsNotNone(frame)
+            self.assertEqual(frame.other.stage, expected)
+
+    def test_unknown_flight_phase(self):
+        frame = _parse_binary_packet(make_binary_payload(flight_phase=200))
+        self.assertEqual(frame.other.stage, "Unknown")
 
 
 

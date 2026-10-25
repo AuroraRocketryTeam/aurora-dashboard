@@ -63,18 +63,22 @@ else:
 # Global set to keep track of currently connected WebSocket clients
 connected_clients = set()
 
-# Standard rocket flight stages for state tracking
+# Standard rocket flight stages for state tracking.
+# Values match the firmware RocketState enum (atlas-esp-idf FlightState.hpp),
+# which is what TelemetryTask sends in the flight_phase byte over LoRa.
 class Stage(Enum):
     INACTIVE = 0
     CALIBRATING = 1
-    READY_FOR_LAUNCH = 2
-    LAUNCH = 3
-    ACCELERATED_FLIGHT = 4
-    BALLISTIC_FLIGHT = 5
-    APOGEE = 6
-    STABILIZATION = 7
-    LANDING = 8
-    RECOVERY = 9
+    GROUND_SERVICES = 2
+    READY_FOR_LAUNCH = 3
+    LAUNCH = 4
+    ACCELERATED_FLIGHT = 5
+    BALLISTIC_FLIGHT = 6
+    APOGEE = 7
+    STABILIZATION = 8
+    DECELERATION = 9
+    LANDING = 10
+    RECOVERED = 11
 
 # ==========================================
 # WEBSOCKET SERVER LOGIC
@@ -171,19 +175,19 @@ async def data_producer():
             elif t < 40: stage = Stage.APOGEE
             elif t < 50: stage = Stage.STABILIZATION
             elif t < 60: stage = Stage.LANDING
-            else: stage = Stage.RECOVERY
+            else: stage = Stage.RECOVERED
 
             current_stage = stage
 
-            # Stage 3-6: Ascent phases
-            if stage.value >= 3 and stage.value <= 6: 
+            # LAUNCH..APOGEE: ascent phases
+            if Stage.LAUNCH.value <= stage.value <= Stage.APOGEE.value:
                 # If stage is 4 (Accelerated Flight), we add thrust (in this case 10g=98 m/s²)
                 # Otherwise, just gravity (-1g = -9.8 m/s^2).
                 velocity += 98 * 0.1 if stage == Stage.ACCELERATED_FLIGHT else -9.8 * 0.1
                 altitude += velocity * 0.1
             
-            # Stage > 6: Descent (Parachute deployment simplified)
-            elif stage.value > 6 and altitude > 0:
+            # After APOGEE: Descent (Parachute deployment simplified)
+            elif stage.value > Stage.APOGEE.value and altitude > 0:
                 velocity = -5
                 altitude += velocity * 0.1
             

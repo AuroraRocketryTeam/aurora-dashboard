@@ -100,9 +100,9 @@ class TelemetryFrame:
 
         Only fields that are actually transmitted in the binary TelemetryPacket
         are included.  Fields available only in direct-serial / CSV-replay mode
-        (calibration, orientation, linear_acceleration, gravity, magnetometer,
-        quaternions, LIS3DHTR accelerometer, velocity components, SNR) are
-        omitted to avoid cluttering the output with permanent zeros.
+        (gravity, magnetometer, quaternions, IMU temperature, LIS3DHTR
+        accelerometer, velocity components, SNR) are omitted to avoid cluttering
+        the output with permanent zeros.
         """
         imu = self.imu
         b1  = self.barometer1
@@ -114,9 +114,21 @@ class TelemetryFrame:
             "acceleration_x":     imu.acceleration_x,
             "acceleration_y":     imu.acceleration_y,
             "acceleration_z":     imu.acceleration_z,
+            # Attitude, Euler angles in degrees
+            "orientation_x":      imu.orientation_x,
+            "orientation_y":      imu.orientation_y,
+            "orientation_z":      imu.orientation_z,
             "angular_velocity_x": imu.angular_velocity_x,
             "angular_velocity_y": imu.angular_velocity_y,
             "angular_velocity_z": imu.angular_velocity_z,
+            "linear_acceleration_x": imu.linear_acceleration_x,
+            "linear_acceleration_y": imu.linear_acceleration_y,
+            "linear_acceleration_z": imu.linear_acceleration_z,
+            # BNO055 calibration, 0 to 3
+            "calibration_sys":    imu.calibration_sys,
+            "calibration_gyro":   imu.calibration_gyro,
+            "calibration_accel":  imu.calibration_accel,
+            "calibration_mag":    imu.calibration_mag,
             # Barometers (pressure in Pa, temperature in °C)
             "pressure_baro1":     b1.pressure,
             "temperature_baro1":  b1.temperature,

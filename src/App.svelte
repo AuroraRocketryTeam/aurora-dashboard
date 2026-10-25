@@ -50,10 +50,13 @@
   let velHistory = new Array(MAX_SAMPLES).fill(0);
   let posHistory = new Array(MAX_SAMPLES).fill(0);
 
+  // Mirrors the firmware RocketState enum (atlas-esp-idf FlightState.hpp), in
+  // order. The backend maps flight_phase (the enum ordinal sent over LoRa) to
+  // these exact strings, so both lists must stay in sync.
   const STAGES = [
-    "Inactive", "Calibrating", "Ready For Launch", "Launch", 
-    "Accelerated Flight", "Ballistic Flight", "Apogee", 
-    "Stabilization", "Landing", "Recovery"
+    "Inactive", "Calibrating", "Ground Services", "Ready For Launch",
+    "Launch", "Accelerated Flight", "Ballistic Flight", "Apogee",
+    "Stabilization", "Deceleration", "Landing", "Recovered"
   ];
 
   // Command Center State
@@ -283,6 +286,24 @@
       return fallback;
   }
 
+  let gps = { latitude: 0, longitude: 0, altitude: 0, hasFix: false };
+
+  // Ground track. A fix repeats unchanged between packets while the rocket sits
+  // still, so a point is kept only once it has moved about a metre.
+  const TRACK_MIN_STEP_DEG = 0.00001;
+  const MAX_TRACK_POINTS = 1200;
+  let gpsTrack = [];
+
+  function appendTrackPoint(lat, lon) {
+      const previous = gpsTrack[gpsTrack.length - 1];
+      if (previous
+          && Math.abs(previous.lat - lat) < TRACK_MIN_STEP_DEG
+          && Math.abs(previous.lon - lon) < TRACK_MIN_STEP_DEG) return;
+
+      gpsTrack = [...gpsTrack, { lat, lon }];
+      if (gpsTrack.length > MAX_TRACK_POINTS) gpsTrack = gpsTrack.slice(-MAX_TRACK_POINTS);
+  }
+
   function handleTelemetry(data) {
       _packetTimestamps.push(performance.now());
 
@@ -309,7 +330,20 @@
           
           if (data.other.rssi != null) rssi = data.other.rssi;
           velocity_z = sanitize(data.other.velocity_z, velocity_z);
-          position_z = sanitize(data.other.altitude, position_z);
+
+          // Height above the launch point, from the barometer. The GPS altitude
+          // is absolute, so it would show the elevation of the field at rest.
+          position_z = sanitize(data.other.baro_altitude, position_z);
+
+          const lat = sanitize(data.other.latitude, 0);
+          const lon = sanitize(data.other.longitude, 0);
+          gps = {
+              latitude: lat,
+              longitude: lon,
+              altitude: sanitize(data.other.altitude, 0),
+              hasFix: lat !== 0 || lon !== 0,
+          };
+          if (gps.hasFix) appendTrackPoint(lat, lon);
 
           // Attempt to get X and Y for magnitude calculation
           vx = sanitize(data.other.velocity_x, 0);
@@ -402,6 +436,8 @@
             {accel_mag}
             {velocity_mag}
             {position_z}
+            {gps}
+            {gpsTrack}
             {baro1}
             {baro2}
             {accel}
