@@ -1,9 +1,12 @@
 <script>
     import { getPolyline } from './utils.js';
+    import TrackMap from './TrackMap.svelte';
 
     export let accel_mag;
     export let velocity_mag;
     export let position_z;
+    export let gps = { latitude: 0, longitude: 0, altitude: 0, hasFix: false };
+    export let gpsTrack = [];
     export let baro1;
     export let baro2;
     export let accel;
@@ -80,6 +83,25 @@
             </div>
         </div>
         <div class="card">
+            <h3>GPS</h3>
+            <div class="data-grid">
+            {#if gps.hasFix}
+                <div class="row"><span>Lat</span> <b>{gps.latitude.toFixed(6)}</b></div>
+                <div class="row"><span>Lon</span> <b>{gps.longitude.toFixed(6)}</b></div>
+                <div class="row"><span>Altitude</span> <b>{gps.altitude.toFixed(1)} m</b></div>
+                <div class="row"><span>Map</span>
+                    <a href="https://www.openstreetmap.org/?mlat={gps.latitude}&mlon={gps.longitude}#map=17/{gps.latitude}/{gps.longitude}"
+                       target="_blank" rel="noreferrer">open</a>
+                </div>
+            {:else}
+                <div class="row"><span>Fix</span> <b class="text-red">NO FIX</b></div>
+                <div class="row"><span>Lat</span> <b>--</b></div>
+                <div class="row"><span>Lon</span> <b>--</b></div>
+                <div class="row"><span>Altitude</span> <b>--</b></div>
+            {/if}
+            </div>
+        </div>
+        <div class="card">
             <h3>ACCELEROMETER</h3>
             <div class="data-grid">
             <div class="row"><span>Acc X</span> <b>{accel.acceleration_x?.toFixed(2)}</b></div>
@@ -89,6 +111,8 @@
             </div>
         </div>
         </div>
+
+        <TrackMap track={gpsTrack} hasFix={gps.hasFix} />
 
         <div class="card imu-card">
         <h3>INERTIAL MEASUREMENT UNIT (IMU)</h3>
@@ -119,16 +143,17 @@
             <div class="row"><span>Z</span> <b>{imu.linear_acceleration_z?.toFixed(2)}</b></div>
             </div>
             <div class="col">
-            <h4>MAGNETOMETER</h4>
+            <h4>MAGNETOMETER<span class="hint" title="not carried by the LoRa packet: only on the on-board interface">*</span></h4>
             <div class="row"><span>X</span> <b>{imu.magnetometer_x?.toFixed(0)}</b></div>
             <div class="row"><span>Y</span> <b>{imu.magnetometer_y?.toFixed(0)}</b></div>
             <div class="row"><span>Z</span> <b>{imu.magnetometer_z?.toFixed(0)}</b></div>
             </div>
         </div>
         <div class="imu-footer">
-            <span><b>Quats:</b> W:{imu.quaternion_w?.toFixed(3)} X:{imu.quaternion_x?.toFixed(3)} Y:{imu.quaternion_y?.toFixed(3)} Z:{imu.quaternion_z?.toFixed(3)}</span>
-            <span><b>Gravity:</b> X:{imu.gravity_x?.toFixed(2)} Y:{imu.gravity_y?.toFixed(2)} Z:{imu.gravity_z?.toFixed(2)}</span>
-            <span><b>Temp:</b> {imu.temperature?.toFixed(1)}°C</span>
+            <span class="note">* magnetometer, quaternions, gravity and IMU temperature are not transmitted over LoRa: they are on the on-board Ground Services page</span>
+            <span><b>Quats*:</b> W:{imu.quaternion_w?.toFixed(3)} X:{imu.quaternion_x?.toFixed(3)} Y:{imu.quaternion_y?.toFixed(3)} Z:{imu.quaternion_z?.toFixed(3)}</span>
+            <span><b>Gravity*:</b> X:{imu.gravity_x?.toFixed(2)} Y:{imu.gravity_y?.toFixed(2)} Z:{imu.gravity_z?.toFixed(2)}</span>
+            <span><b>Temp*:</b> {imu.temperature?.toFixed(1)}°C</span>
         </div>
         </div>
 
@@ -162,6 +187,8 @@
   
   .imu-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; font-size: 0.8rem; }
   .imu-grid h4 { color: #555; font-size: 0.7rem; margin-bottom: 5px; }
+  .imu-grid .hint { color: #e9c46a; margin-left: 3px; cursor: help; }
+  .imu-footer .note { color: #666; font-style: italic; }
   .imu-grid .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
   .imu-grid b { color: #fff; font-family: monospace; }
   .imu-footer { margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; display: flex; gap: 20px; font-size: 0.8rem; color: #888; flex-wrap: wrap; }

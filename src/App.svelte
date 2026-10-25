@@ -50,17 +50,40 @@
   let velHistory = new Array(MAX_SAMPLES).fill(0);
   let posHistory = new Array(MAX_SAMPLES).fill(0);
 
+  // Mirrors the firmware RocketState enum (atlas-esp-idf FlightState.hpp), in
+  // order. The backend maps flight_phase (the enum ordinal sent over LoRa) to
+  // these exact strings, so both lists must stay in sync.
   const STAGES = [
-    "Inactive", "Calibrating", "Ready For Launch", "Launch", 
-    "Accelerated Flight", "Ballistic Flight", "Apogee", 
-    "Stabilization", "Landing", "Recovery"
+    "Inactive", "Calibrating", "Ground Services", "Ready For Launch",
+    "Launch", "Accelerated Flight", "Ballistic Flight", "Apogee",
+    "Stabilization", "Deceleration", "Landing", "Recovered"
   ];
 
   // Command Center State
-  let commandHistory = []; 
+  let commandHistory = [];
+  let _lastAckCommandId = 0;
+  let rssi = null;
+
+  // Packet rate counter (sliding 2-second window for fractional pkt/s)
+  let packetRate = 0;
+  let _packetTimestamps = [];
+  const _packetRateTimer = setInterval(() => {
+      const now = performance.now();
+      _packetTimestamps = _packetTimestamps.filter(t => now - t <= 15000);
+      const span = Math.min((now - (_packetTimestamps[0] ?? now)) / 1000, 15);
+      packetRate = span > 0 ? _packetTimestamps.length / span : 0;
+  }, 250);
+
+  const _COMMAND_NAMES = { 0: null, 1: "PING", 2: "ABORT", 3: "EMERG_CHUTE_OPEN" };
+
+  function addCommandEntry(msg, type = "sent") {
+      let time = new Date().toLocaleTimeString();
+      commandHistory = [{ time, msg, type }, ...commandHistory].slice(0, 100);
+  }
 
   onDestroy(() => {
     disconnect();
+    clearInterval(_packetRateTimer);
   });
 
   // Connection Management
@@ -117,7 +140,14 @@
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        handleTelemetry(data);
+        if (data.type === "serial_log") {
+            addCommandEntry(data.text, "serial");
+        } else if ("ok" in data || "error" in data) {
+            if (data.ok)   addCommandEntry(data.command_id ? `${data.command_id} sent` : "OK", "sent");
+            else           addCommandEntry(`${data.error}`, "error");
+        } else {
+            handleTelemetry(data);
+        }
       } catch (e) { }
     };
   }
@@ -256,7 +286,27 @@
       return fallback;
   }
 
+  let gps = { latitude: 0, longitude: 0, altitude: 0, hasFix: false };
+
+  // Ground track. A fix repeats unchanged between packets while the rocket sits
+  // still, so a point is kept only once it has moved about a metre.
+  const TRACK_MIN_STEP_DEG = 0.00001;
+  const MAX_TRACK_POINTS = 1200;
+  let gpsTrack = [];
+
+  function appendTrackPoint(lat, lon) {
+      const previous = gpsTrack[gpsTrack.length - 1];
+      if (previous
+          && Math.abs(previous.lat - lat) < TRACK_MIN_STEP_DEG
+          && Math.abs(previous.lon - lon) < TRACK_MIN_STEP_DEG) return;
+
+      gpsTrack = [...gpsTrack, { lat, lon }];
+      if (gpsTrack.length > MAX_TRACK_POINTS) gpsTrack = gpsTrack.slice(-MAX_TRACK_POINTS);
+  }
+
   function handleTelemetry(data) {
+      _packetTimestamps.push(performance.now());
+
       // Extract Standard Sensors (Merge with existing state to prevent flickering if partial updates come)
       if (data.imu) imu = { ...imu, ...data.imu };
       if (data.barometer1) baro1 = { ...baro1, ...data.barometer1 };
@@ -268,23 +318,48 @@
 
       if (data.other) {
           if (data.other.stage) currentStage = data.other.stage;
+
+          const ackId = data.other.last_ack_command_id ?? 0;
+          if (ackId !== 0 && ackId !== _lastAckCommandId) {
+              _lastAckCommandId = ackId;
+              let name = _COMMAND_NAMES[ackId] ?? `0x${ackId.toString(16).padStart(2,"0")}`;
+              addCommandEntry(`ACK received: ${name}`, "ack");
+          } else if (ackId === 0) {
+              _lastAckCommandId = 0;
+          }
           
+          if (data.other.rssi != null) rssi = data.other.rssi;
           velocity_z = sanitize(data.other.velocity_z, velocity_z);
-          position_z = sanitize(data.other.altitude, position_z);
-          
+
+          // Height above the launch point, from the barometer. The GPS altitude
+          // is absolute, so it would show the elevation of the field at rest.
+          position_z = sanitize(data.other.baro_altitude, position_z);
+
+          const lat = sanitize(data.other.latitude, 0);
+          const lon = sanitize(data.other.longitude, 0);
+          gps = {
+              latitude: lat,
+              longitude: lon,
+              altitude: sanitize(data.other.altitude, 0),
+              hasFix: lat !== 0 || lon !== 0,
+          };
+          if (gps.hasFix) appendTrackPoint(lat, lon);
+
           // Attempt to get X and Y for magnitude calculation
           vx = sanitize(data.other.velocity_x, 0);
           vy = sanitize(data.other.velocity_y, 0);
       }
 
       // Update Visualization Histories
-      
+
       const ax = sanitize(accel.acceleration_x, 0);
       const ay = sanitize(accel.acceleration_y, 0);
       const az = sanitize(accel.acceleration_z, 0);
-      
+
       accel_mag = Math.sqrt((ax * ax) + (ay * ay) + (az * az));
-      velocity_mag = Math.sqrt((vx * vx) + (vy * vy) + (velocity_z * velocity_z));
+      // Use vector components if available, otherwise fall back to the scalar velocity from the packet
+      const componentMag = Math.sqrt((vx * vx) + (vy * vy) + (velocity_z * velocity_z));
+      velocity_mag = (vx || vy || velocity_z) ? componentMag : sanitize(data?.other?.velocity, 0);
       const newPressure = sanitize(baro1.pressure, 101325);
 
       // Initialization Logic
@@ -339,17 +414,19 @@
       }
 
       if (sent) {
-        commandHistory = [{ time, msg: str }, ...commandHistory].slice(0, 50); 
+        addCommandEntry(str, "sent");
       }
   }
 </script>
 
 <main>
-  <Header 
-    bind:activePage 
-    bind:connectionType 
-    {isConnected} 
-    {toggleConnection} 
+  <Header
+    bind:activePage
+    bind:connectionType
+    {isConnected}
+    {toggleConnection}
+    {rssi}
+    {packetRate}
   />
 
   <div class="container-fluid">
@@ -359,6 +436,8 @@
             {accel_mag}
             {velocity_mag}
             {position_z}
+            {gps}
+            {gpsTrack}
             {baro1}
             {baro2}
             {accel}
@@ -380,7 +459,8 @@
 </main>
 
 <style>
-  :global(body) { background: #0f0f13; color: #eee; margin: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; overflow-x: hidden; }
-  
-  .container-fluid { width: 98%; margin: 0 auto; height: calc(100vh - 60px); }
+  :global(body) { background: #0f0f13; color: #eee; margin: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; overflow: hidden; }
+
+  main { display: flex; flex-direction: column; height: 100vh; }
+  .container-fluid { width: 98%; margin: 0 auto; flex: 1; min-height: 0; overflow: hidden; }
 </style>

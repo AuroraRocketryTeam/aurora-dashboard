@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Telemetry autosaves
+autosave/
+autosave_*.csv
